@@ -15,18 +15,31 @@
  */
 package com.google.ar.sceneform.samples.solarsystem;
 
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Color;
+import android.hardware.display.VirtualDisplay;
+import android.media.MediaRecorder;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.support.annotation.NonNull;
 import android.support.design.widget.Snackbar;
 import android.support.v7.app.AppCompatActivity;
+import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.Toast;
+import android.widget.ToggleButton;
+
 import com.google.ar.core.Anchor;
 import com.google.ar.core.Frame;
 import com.google.ar.core.HitResult;
@@ -44,9 +57,32 @@ import com.google.ar.sceneform.math.Vector3;
 import com.google.ar.sceneform.rendering.ModelRenderable;
 import com.google.ar.sceneform.rendering.ViewRenderable;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+
+import android.app.Activity;
+import android.app.ActivityManager;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Color;
+import android.hardware.display.VirtualDisplay;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Build.VERSION_CODES;
+import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.support.v4.app.ActivityCompat;
+
+import android.hardware.display.DisplayManager;
+
+
+import java.nio.ByteBuffer;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 /**
  * This is a simple example that shows how to create an augmented reality (AR) application using the
@@ -86,6 +122,18 @@ public class SolarActivity extends AppCompatActivity {
 
   private ArrayList<Planet> planetList = new ArrayList<Planet>();
 
+  private static final int PERMISSION_CODE = 1;
+  private int mScreenDensity;
+  private MediaProjectionManager mProjectionManager;
+  private static int DISPLAY_WIDTH = 480;
+  private static int DISPLAY_HEIGHT = 640;
+  private MediaProjection mMediaProjection;
+  private VirtualDisplay mVirtualDisplay;
+  private MediaProjection.Callback mMediaProjectionCallback;
+  private ToggleButton mToggleButton;
+  private MediaRecorder mMediaRecorder;
+  private Surface getSurface;
+
   @Override
   @SuppressWarnings({"AndroidApiChecker", "FutureReturnValueIgnored"})
   // CompletableFuture requires api level 24
@@ -99,6 +147,29 @@ public class SolarActivity extends AppCompatActivity {
 
     setContentView(R.layout.activity_solar);
     arSceneView = findViewById(R.id.ar_scene_view);
+
+
+    DisplayMetrics metrics = new DisplayMetrics();
+    getWindowManager().getDefaultDisplay().getMetrics(metrics);
+    mScreenDensity = metrics.densityDpi;
+
+    DISPLAY_HEIGHT = metrics.heightPixels;
+    DISPLAY_WIDTH = metrics.widthPixels;
+
+    mToggleButton = (ToggleButton) findViewById(R.id.toggle);
+    mToggleButton.setText("Click to record!");
+    mToggleButton.setOnClickListener(new View.OnClickListener() {
+      @Override
+      public void onClick(View v) {
+
+        onToggleScreenShare(v);
+
+      }
+    });
+
+    mMediaProjectionCallback = new MediaProjectionCallback();
+
+
 
     // Build all the planet models.
     CompletableFuture<ModelRenderable> sunStage =
@@ -284,6 +355,12 @@ public class SolarActivity extends AppCompatActivity {
     if (arSceneView != null) {
       arSceneView.destroy();
     }
+    if (mMediaProjection != null) {
+      mMediaProjection.stop();
+      mMediaRecorder.reset();
+
+      mMediaProjection = null;
+    }
   }
 
   @Override
@@ -428,7 +505,7 @@ public class SolarActivity extends AppCompatActivity {
                 for(int x = 0; x < planetList.size(); x++){
                   // Sets scale based off ratio
                   planetList.get(x).setLocalScale(new Vector3(ratio / planetList.get(x).myScale, ratio / planetList.get(x).myScale, ratio / planetList.get(x).myScale));
-                  // Sets local position based off of distance from sun (x vector is changed)
+                  // Sets local position based o:ff of distance from sun (x vector is changed)
                   planetList.get(x).setLocalPosition(new Vector3(planetList.get(x).getLocalScale().x * ratio, planetList.get(x).getLocalPosition().y, planetList.get(x).getLocalPosition().z));
                   //planetList.get(x).setLocalScale(new Vector3(planetList.get(x).getLocalScale().x * ratio, planetList.get(x).getLocalScale().y * ratio, planetList.get(x).getLocalScale().z *ratio));
                   //planetList.get(x).setLocalPosition(new Vector3(planetList.get(x).getLocalPosition().x, planetList.get(x).getLocalPosition().y * ratio, planetList.get(x).getLocalPosition().z));
@@ -536,5 +613,145 @@ public class SolarActivity extends AppCompatActivity {
 
     loadingMessageSnackbar.dismiss();
     loadingMessageSnackbar = null;
+  }
+
+
+  @Override
+  public void onActivityResult(int requestCode, int resultCode, Intent data) {
+    if (requestCode != PERMISSION_CODE) {
+      return;
+    }
+    if (resultCode != RESULT_OK) {
+      Toast.makeText(this,
+              "Screen Cast Permission Denied", Toast.LENGTH_SHORT).show();
+      mToggleButton.setChecked(false);
+      return;
+    }
+    mMediaProjection = mProjectionManager.getMediaProjection(resultCode, data);
+    mMediaProjection.registerCallback(mMediaProjectionCallback, null);
+    mVirtualDisplay = createVirtualDisplay();
+    mMediaRecorder.start();
+  }
+
+  public void onToggleScreenShare(View view) {
+    if (((ToggleButton) view).isChecked()) {
+      initRecorder();
+      prepareRecorder();
+      mProjectionManager = (MediaProjectionManager) getSystemService
+              (Context.MEDIA_PROJECTION_SERVICE);
+
+
+      mToggleButton.setBackgroundColor(Color.TRANSPARENT);
+      mToggleButton.setText("   ");
+      shareScreen();
+    } else {
+      //mMediaRecorder.stop();
+      mMediaRecorder.reset();
+      stopScreenSharing();
+      mToggleButton.setText("Click to record!");
+      mToggleButton.setVisibility(View.VISIBLE);
+      mToggleButton.setBackgroundColor(getResources().getColor(R.color.lightBlueTheme));
+    }
+  }
+
+  private void shareScreen() {
+    if (mMediaProjection == null) {
+      startActivityForResult(mProjectionManager.createScreenCaptureIntent(), PERMISSION_CODE);
+      return;
+    }
+    mVirtualDisplay = createVirtualDisplay();
+    mMediaRecorder.start();
+
+  }
+
+  private void stopScreenSharing() {
+    if (mVirtualDisplay == null) {
+      return;
+    }
+    mVirtualDisplay.release();
+    mMediaRecorder.reset();
+    //mMediaRecorder.release();
+  }
+
+  private VirtualDisplay createVirtualDisplay() {
+    return mMediaProjection.createVirtualDisplay("MainActivity",
+            DISPLAY_WIDTH, DISPLAY_HEIGHT, mScreenDensity,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            mMediaRecorder.getSurface(), null /*Callbacks*/, null /*Handler*/);
+  }
+
+  private class MediaProjectionCallback extends MediaProjection.Callback {
+    @Override
+    public void onStop() {
+      if (mToggleButton.isChecked()) {
+        mToggleButton.setChecked(false);
+        mMediaRecorder.stop();
+        //mMediaRecorder.reset();
+      }
+      mMediaProjection = null;
+      stopScreenSharing();
+    }
+  }
+
+  private void prepareRecorder() {
+    try {
+      mMediaRecorder.prepare();
+    } catch (IllegalStateException | IOException e) {
+      e.printStackTrace();
+      finish();
+    }
+  }
+
+  public String getFilePath() {
+    // DCIM/Camera
+    final String directory = Environment.getExternalStorageDirectory() + File.separator + "Recordings";
+    if (!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
+      Toast.makeText(this, "Failed to get External Storage", Toast.LENGTH_SHORT).show();
+      return null;
+    }
+    final File folder = new File(directory);
+    boolean success = true;
+    if (!folder.exists()) {
+      success = folder.mkdir();
+    }
+    String filePath;
+    if (success) {
+      String videoName = ("capture_" + getCurSysDate() + ".mp4");
+      filePath = directory + File.separator + videoName;
+    } else {
+      Toast.makeText(this, "Failed to create Recordings directory", Toast.LENGTH_SHORT).show();
+      return null;
+    }
+    return filePath;
+  }
+
+  public String getCurSysDate() {
+    return new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
+  }
+
+  private void initRecorder() {
+    int YOUR_REQUEST_CODE = 200; // could be something else..
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.RECORD_AUDIO, android.Manifest.permission.WRITE_EXTERNAL_STORAGE},
+              YOUR_REQUEST_CODE);
+
+
+      if (mMediaRecorder == null) {
+        mMediaRecorder = new MediaRecorder();
+      }
+      //CamcorderProfile cpHigh = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
+
+      mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
+      mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+      mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+      mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+      mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT);
+      mMediaRecorder.setVideoSize(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+      mMediaRecorder.setVideoFrameRate(30);
+      mMediaRecorder.setOutputFile(getFilePath());
+      mMediaRecorder.setVideoEncodingBitRate(10000000);
+
+      //mMediaRecorder.setOutputFile(getFilePath());
+    }
   }
 }

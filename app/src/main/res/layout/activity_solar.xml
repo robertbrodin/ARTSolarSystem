@@ -26,4 +26,13 @@
       android:layout_height="fill_parent"
       android:layout_gravity="top"/>
 
+  <ToggleButton
+      android:id="@+id/toggle"
+      android:layout_width="match_parent"
+      android:layout_height="100dp"
+      android:layout_gravity="center_horizontal|bottom"
+      android:layout_marginBottom="20dp"
+      android:background="#3F79B2"
+      android:text="Off" />
+
 </RelativeLayout>
