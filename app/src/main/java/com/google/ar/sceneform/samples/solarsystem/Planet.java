@@ -54,18 +54,24 @@ public class Planet extends Node implements Node.OnTapListener {
 
   private static final float INFO_CARD_Y_POS_COEFF = 1.0f;
 
+  public Node parent;
+
+  public float fromParent;
+
   public Planet(
       Context context,
       String planetName,
       float planetScale,
       ModelRenderable planetRenderable,
-      SolarSettings solarSettings) {
+      SolarSettings solarSettings, Node parent, float fromParent) {
+    this.fromParent = fromParent;
     this.context = context;
     this.planetName = planetName;
     this.planetScale = planetScale;
     this.planetRenderable = planetRenderable;
     this.solarSettings = solarSettings;
     this.myScale = planetScale;
+    this.parent = parent;
     setOnTapListener(this);
   }
 
